@@ -951,8 +951,15 @@ window.WAPI.sendMessage = function (id, message, done) {
             // });
         }
     } else {
-        if (done !== undefined) done(false);
-        return false;
+        return window.Store.WapQuery.queryExist(id).then(contact => {
+            if (contact && contact.jid) {
+                chat = window.Store.Chat.gadd(contact.jid);
+                chat.sendMessage = (chat.sendMessage ? chat.sendMessage : function(e) { 
+                    return window.Store.SendTextMsgToChat(this, ...arguments); 
+                });
+                return WAPI.sendMessageReturnId(chat,message).then(id=>{return id})
+            }    
+        });
     }
 };
 
