@@ -169,6 +169,8 @@ app.post(
     const message = req.body;
 
     const jid = cuidToJid(message.to);
+
+    /*
     let contact;
     contact = await globalClient.checkNumberStatus(jid);
     if (!contact || contact === 404 || contact.status !== 200) {
@@ -177,18 +179,16 @@ app.post(
         ds_error: 'Whatsapp ' + message.to + ' não localizado.'
       });
     }
+    */
 
-    const newMessage = await globalClient.sendText(
-      contact.id._serialized,
-      message.body
-    );
+    const newMessage = await globalClient.sendText(jid, message.body);
 
     if (newMessage) {
       return res.send({ cd_error: 0 });
     } else {
       return res.send({
-        cd_error: 99,
-        ds_error: 'Falha ao enviar whatsapp para ' + message.to + '.'
+        cd_error: 3,
+        ds_error: 'Whatsapp ' + message.to + ' não localizado.'
       });
     }
   }
