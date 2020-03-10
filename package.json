@@ -16,7 +16,8 @@
     "test": "echo \"No tests yet\"",
     "release": "release-it",
     "release-ci": "release-it --ci",
-    "release-image": "node release-image.js"
+    "release-image": "node release-image.js",
+    "build:server": "ts-node ./server/server.ts"
   },
   "husky": {
     "hooks": {

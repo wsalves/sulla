@@ -911,6 +911,18 @@ window.WAPI.sendMessageReturnId = async function (ch, body) {
     return newId._serialized;
 }
 
+window.WAPI.AddContactAndsendMessageReturnId = async function (id, message) {
+    const contact = await window.Store.WapQuery.queryExist(id);
+    if (contact && contact.jid) {
+        chat = window.Store.Chat.gadd(contact.jid);
+        chat.sendMessage = (chat.sendMessage ? chat.sendMessage : function(e) { 
+            return window.Store.SendTextMsgToChat(this, ...arguments); 
+        });
+        return await WAPI.sendMessageReturnId(chat,message);
+    }
+    return null;    
+}
+
 
 window.WAPI.sendMessage = function (id, message, done) {
     var chat = WAPI.getChat(id);
@@ -951,15 +963,7 @@ window.WAPI.sendMessage = function (id, message, done) {
             // });
         }
     } else {
-        return window.Store.WapQuery.queryExist(id).then(contact => {
-            if (contact && contact.jid) {
-                chat = window.Store.Chat.gadd(contact.jid);
-                chat.sendMessage = (chat.sendMessage ? chat.sendMessage : function(e) { 
-                    return window.Store.SendTextMsgToChat(this, ...arguments); 
-                });
-                return WAPI.sendMessageReturnId(chat,message).then(id=>{return id})
-            }    
-        });
+        return WAPI.AddContactAndsendMessageReturnId(id, message).then(id=>{return id});
     }
 };
 

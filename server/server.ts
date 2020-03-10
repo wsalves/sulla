@@ -65,7 +65,7 @@ ev.on('sessionData.**', async (sessionData, sessionId) => {
 
 const sullaParams = {
   useChrome: true,
-  headless: false,
+  headless: true,
   throwErrorOnTosBlock: true,
   killTimer: 40,
   autoRefresh: true, //default to true
@@ -127,6 +127,10 @@ function start(client) {
   });
 }
 
+function cuidToJid(cuid) {
+  return cuid.indexOf('@') < 0 ? cuid + '@c.us' : cuid;
+}
+
 app.get('/getAllUnreadMessages', async (req, res) => {
   const newMessages = await globalClient.getAllUnreadMessages();
   return res.send(newMessages);
@@ -150,21 +154,43 @@ app.post(
     }
 
     if (!globalClient || globalClient == null) {
-      return res.send({ cd_error: 1, error: 'Instância não está ativa!' });
+      return res.send({ cd_error: 1, ds_error: 'Instância não está ativa!' });
     }
 
     const states = await globalClient.getConnectionState();
     if (states !== 'CONNECTED') {
       return res.send({
         cd_error: 2,
-        error: 'Instância está em modo ' + states
+        ds_error: 'Instância está em modo ' + states
       });
     }
 
     console.log('body is ', req.body);
     const message = req.body;
-    const newMessage = await globalClient.sendText(message.to, message.body);
-    return res.send(newMessage);
+
+    const jid = cuidToJid(message.to);
+    let contact;
+    contact = await globalClient.checkNumberStatus(jid);
+    if (!contact || contact === 404 || contact.status !== 200) {
+      return res.send({
+        cd_error: 3,
+        ds_error: 'Whatsapp ' + message.to + ' não localizado.'
+      });
+    }
+
+    const newMessage = await globalClient.sendText(
+      contact.id._serialized,
+      message.body
+    );
+
+    if (newMessage) {
+      return res.send({ cd_error: 0 });
+    } else {
+      return res.send({
+        cd_error: 99,
+        ds_error: 'Falha ao enviar whatsapp para ' + message.to + '.'
+      });
+    }
   }
 );
 
