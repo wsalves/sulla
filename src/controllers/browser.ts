@@ -44,7 +44,7 @@ export async function initWhatsapp(sessionId?: string, puppeteerConfigOverride?:
   );
   //check if [session].json exists in __dirname
   const sessionjsonpath = path.join(process.cwd(), `${sessionId || 'session'}.data.json`);
-  let sessionjson = puppeteerConfigOverride.sessionData;
+  let sessionjson = puppeteerConfigOverride?.sessionData;
   if (fs.existsSync(sessionjsonpath)) sessionjson = JSON.parse(fs.readFileSync(sessionjsonpath));
   if(sessionjson) await waPage.evaluateOnNewDocument(
     session => {
@@ -61,8 +61,6 @@ export async function initWhatsapp(sessionId?: string, puppeteerConfigOverride?:
 }
 
 export async function injectApi(page: Page) {
-  // const preloadFile = fs.readFileSync('./preload', 'utf8');
-  // await page.evaluateOnNewDocument(preloadFile);
   await page.addScriptTag({
     path: require.resolve(path.join(__dirname, '../lib', 'wapi.js'))
   });
@@ -77,7 +75,7 @@ async function initBrowser(sessionId?: string, puppeteerConfigOverride:any={}) {
 
   if(puppeteerConfigOverride?.useChrome) {
     puppeteerConfigOverride.executablePath = ChromeLauncher.Launcher.getInstallations()[0];
-    console.log('Found chrome', puppeteerConfigOverride.executablePath)
+    console.log('\nFound chrome', puppeteerConfigOverride.executablePath)
   }
 
   const browser = await puppeteer.launch({

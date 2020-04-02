@@ -11,6 +11,7 @@ export interface Message {
   from: string;
   to: string;
   self: string;
+  duration?: string|number;
   ack: number;
   invis: boolean;
   isNewMsg: boolean;
@@ -99,6 +100,7 @@ export interface Message {
     presence: { id: string; chatstates: any[] };
   };
   chatId: string;
+  quotedMsg: any;
   quotedMsgObj: any;
   mediaData: {};
 }

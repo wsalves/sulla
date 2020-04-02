@@ -10,6 +10,7 @@ import { Id } from './model/id';
 import axios from 'axios';
 import { ParticipantChangedEventModel } from './model/group-metadata';
 import { useragent } from '../config/puppeteer.config'
+import sharp from 'sharp';
 
 export const getBase64 = async (url: string) => {
   try {
@@ -24,6 +25,22 @@ export const getBase64 = async (url: string) => {
   }
 }
 
+function base64MimeType(encoded) {
+  var result = null;
+
+  if (typeof encoded !== 'string') {
+    return result;
+  }
+
+  var mime = encoded.match(/data:([a-zA-Z0-9]+\/[a-zA-Z0-9-.+]+).*,.*/);
+
+  if (mime && mime.length) {
+    result = mime[1];
+  }
+
+  return result;
+}
+
 declare module WAPI {
   const waitNewMessages: (rmCallback: boolean, callback: Function) => void;
   const addAllNewMessagesListener: (callback: Function) => void;
@@ -32,6 +49,7 @@ declare module WAPI {
   const onParticipantsChanged: (groupId: string, callback: Function) => any;
   const onLiveLocation: (chatId: string, callback: Function) => any;
   const sendMessage: (to: string, content: string) => string;
+  const sendMessageWithMentions: (to: string, content: string) => string;
   const setChatState: (chatState: ChatState, chatId: string) => void;
   const reply: (to: string, content: string, quotedMsg: string | Message) => void;
   const getGeneratedUserAgent: (userAgent?: string) => string;
@@ -45,8 +63,13 @@ declare module WAPI {
   const removeParticipant: (groupId: string, contactId: string) => void;
   const promoteParticipant: (groupId: string, contactId: string) => void;
   const demoteParticipant: (groupId: string, contactId: string) => void;
+  const sendImageAsSticker: (webpBase64: string, to: string, metadata?: any) => void;
   const createGroup: (groupName: string, contactId: string|string[]) => Promise<any>;
   const sendSeen: (to: string) => void;
+  const deleteConversation: (chatId: string) => boolean;
+  const clearChat: (chatId: string) => void;
+  const revokeGroupInviteLink: (chatId: string) => Promise<string> | boolean;
+  const getGroupInviteLink: (chatId: string) => boolean;
   const sendImage: (
     base64: string,
     to: string,
@@ -230,7 +253,7 @@ export class Whatsapp {
   public async forceRefocus() {
     //255 is the address of 'use here'
     //@ts-ignore
-    const useHere: string = await this.page.evaluate(() => { return window.l10n.localeStrings[window.l10n._locale.l][0][255] });
+    const useHere: string = await this.page.evaluate(() => { return window.l10n.localeStrings[window.l10n._locale.l][0][window.l10n.localeStrings['en']?.[0].findIndex((x:string)=>x.toLowerCase()=='use here') || 257] });
     await this.page.waitForFunction(
       `[...document.querySelectorAll("div[role=button")].find(e=>{return e.innerHTML.toLowerCase()==="${useHere.toLowerCase()}"})`,
       { timeout: 0 }
@@ -285,17 +308,16 @@ export class Whatsapp {
    * @param to callback
    * @returns Observable stream of Chats
    */
-  public onAddedToGroup(fn: (chat: Chat) => void) {
+  public onAddedToGroup(fn: (chat: Chat) => any) {
     const funcName = "onAddedToGroup";
-    return this.page.exposeFunction(funcName, (chat: Chat) =>
+    return this.page.exposeFunction(funcName, (chat: any) =>
       fn(chat)
     )
       .then(_ => this.page.evaluate(
-        (funcName ) => {
+        () => {
         //@ts-ignore
-          WAPI.onAddedToGroup(window[funcName]);
-        },
-        {funcName}
+          WAPI.onAddedToGroup(window.onAddedToGroup);
+        }
       ));
   }
   
@@ -310,6 +332,25 @@ export class Whatsapp {
       ({ to, content }) => {
         WAPI.sendSeen(to);
         return WAPI.sendMessage(to, content);
+      },
+      { to, content }
+    );
+  }
+  
+
+  /**
+   * Sends a text message to given chat that includes mentions.
+   * In order to use this method correctly you will need to send the text like this:
+   * "@4474747474747 how are you?"
+   * Basically, add a @ symbol before the number of the contact you want to mention.
+   * @param to chat id: xxxxx@us.c
+   * @param content text message
+   */
+  public async sendTextWithMentions(to: string, content: string) {
+    return await this.page.evaluate(
+      ({ to, content }) => {
+        WAPI.sendSeen(to);
+        return WAPI.sendMessageWithMentions(to, content);
       },
       { to, content }
     );
@@ -369,9 +410,7 @@ export class Whatsapp {
   public async getGeneratedUserAgent(userA?: string) {
     let ua = userA || useragent;
     return await this.page.evaluate(
-      (ua) => {
-        WAPI.getGeneratedUserAgent(ua);
-      },
+      ({ua}) => WAPI.getGeneratedUserAgent(ua),
       { ua }
     );
   }
@@ -790,6 +829,54 @@ public async getStatus(contactId: string) {
   }
 
   /**
+    * Delete the conversation from your whatsapp
+   * @param chatId
+   * @returns boolean
+   */
+  public async deleteChat(chatId: string) {
+    return await this.page.evaluate(
+      chatId => WAPI.deleteConversation(chatId),
+      chatId
+    );
+  }
+
+  /**
+    * Delete all messages from the chat.
+   * @param chatId
+   * @returns boolean
+   */
+  public async clearChat(chatId: string) {
+    return await this.page.evaluate(
+      chatId => WAPI.clearChat(chatId),
+      chatId
+    );
+  }
+
+  /**
+    * Retreives an invite link for a group chat. returns false if chat is not a group.
+   * @param chatId
+   * @returns Promise<string>
+   */
+  public async getGroupInviteLink(chatId: string) {
+    return await this.page.evaluate(
+      chatId => WAPI.getGroupInviteLink(chatId),
+      chatId
+    );
+  }
+
+  /**
+    * Revokes the current invite link for a group chat. Any previous links will stop working
+   * @param chatId
+   * @returns Promise<boolean>
+   */
+  public async revokeGroupInviteLink(chatId: string) {
+    return await this.page.evaluate(
+      chatId => WAPI.revokeGroupInviteLink(chatId),
+      chatId
+    );
+  }
+
+  /**
    * Deletes message of given message id
    * @param contactId The chat id from which to delete the message.
    * @param messageId The specific message id of the message to be deleted
@@ -967,6 +1054,33 @@ public async getStatus(contactId: string) {
       (idGroup) => WAPI.getGroupAdmins(idGroup),
       idGroup
     );
+  }
+
+  /**
+   * This function takes an image and sends it as a sticker to the recipient. This is helpful for sending semi-ephemeral things like QR codes. 
+   * The advantage is that it will not show up in the recipients gallery. This function automatiicaly converts images to the required webp format.
+   * @param b64: This is the base64 string formatted with data URI. You can also send a plain base64 string but it may result in an error as the function will not be able to determine the filetype before sending.
+   * @param to: The recipient id.
+   */
+  public async sendImageAsSticker(b64: string,to: string){
+    const buff = Buffer.from(b64.replace(/^data:image\/(png|gif|jpeg);base64,/,''), 'base64');
+    const mimeInfo = base64MimeType(b64);
+    if(!mimeInfo || mimeInfo.includes("image")){
+      //non matter what, convert to webp, resize + autoscale to width 512 px
+      const scaledImageBuffer = await sharp(buff,{ failOnError: false })
+      .resize({ width: 512, height: 512 })
+      .toBuffer();
+      const webp = sharp(scaledImageBuffer,{ failOnError: false }).webp();
+      const metadata : any= await webp.metadata();
+      const webpBase64 = (await webp.toBuffer()).toString('base64');
+      return await this.page.evaluate(
+        ({ webpBase64,to, metadata }) => WAPI.sendImageAsSticker(webpBase64,to, metadata),
+        { webpBase64,to, metadata }
+      );
+    } else {
+      console.log('Not an image');
+      return false;
+    }
   }
 }
 

@@ -3,6 +3,7 @@ const { check, validationResult } = require('express-validator');
 
 //const sulla = require('sulla-hotfix');
 import { create, Whatsapp, decryptMedia, ev } from '../src/index';
+import { SessionWhatsapp } from './sessions';
 const mime = require('mime-types');
 const fs = require('fs');
 
@@ -11,7 +12,24 @@ const uaOverride =
 const tosBlockGuaranteed =
   'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) HeadlessChrome/79.0.3945.88 Safari/537.36';
 const ON_DEATH = require('death');
-let globalClient: Whatsapp;
+
+const auth_key = 'fe99caad-69c1-4831-b744-cf9b117dfc72';
+const session1 = '5534996876520';
+const session2 = '5534996876521';
+const session3 = '5534996876522';
+
+const ClientSessions: Map<string, SessionWhatsapp[]> = new Map([
+  [
+    auth_key,
+    [
+      new SessionWhatsapp(session1, null) //,
+      //new SessionWhatsapp(session2, null),
+      //new SessionWhatsapp(session3, null)
+    ]
+  ]
+]);
+
+//let globalClient: Whatsapp;
 
 const app = express();
 app.use(express.json());
@@ -23,7 +41,7 @@ app.use(function(req, res, next) {
       .json({ cd_error: 403, error: 'Credenciais não enviadas!' });
   } else {
     const key = req.headers['auth-key'];
-    if ('fe99caad-69c1-4831-b744-cf9b117dfc72' !== key) {
+    if (auth_key !== key) {
       return res
         .status(403)
         .json({ cd_error: 403, error: 'Credencial inválida!' });
@@ -34,7 +52,7 @@ app.use(function(req, res, next) {
 
 ON_DEATH(async function(signal, err) {
   console.log('killing session');
-  if (globalClient) await globalClient.kill();
+  //if (globalClient) await globalClient.kill();
 });
 
 ev.on('qr.**', async (qrcode, sessionId) => {
@@ -64,31 +82,90 @@ ev.on('sessionData.**', async (sessionData, sessionId) => {
 });
 
 const sullaParams = {
-  useChrome: true,
-  headless: true,
+  useChrome: false,
+  headless: false,
   throwErrorOnTosBlock: true,
   killTimer: 40,
   autoRefresh: true, //default to true
   qrRefreshS: 15
 };
 
-const sessionName = 'prospex';
+ClientSessions.forEach((value, key) => {
+  const sessions = ClientSessions.get(key);
+  if (sessions) {
+    sessions.forEach(session => {
+      console.log('session: ', session);
+      create(session.session, sullaParams)
+        .then(async client => await start(client))
+        .catch(e => {
+          console.log('Error', e.message);
+        });
+    });
+  }
+});
+/*
+  
+  console.log('sessions: ', sessions);
+  for (var session in sessions) {
+    //@ts-ignore
+    console.log('session.session: ', session.session);
+    //@ts-ignore
+    create(session.session, sullaParams)
+      .then(async client => await start(client))
+      .catch(e => {
+        console.log('Error', e.message);
+      });
+  }
+}
+*/
 
-create(sessionName, sullaParams)
-  // create()
-  .then(async client => await start(client))
-  .catch(e => {
-    console.log('Error', e.message);
-    // process.exit();
-  });
+function getSessions(key: string): SessionWhatsapp[] {
+  if (ClientSessions.has(key)) {
+    return ClientSessions.get(key);
+  }
+  return null;
+}
+
+function getSessionsBySessionId(
+  key: string,
+  sessionId: string
+): SessionWhatsapp {
+  if (ClientSessions.has(key)) {
+    return ClientSessions.get(key).find(w => w.session === sessionId);
+  }
+  return null;
+}
+
+function getRequestKey(req): string {
+  if (!req.headers || !req.headers['auth-key']) {
+    return null;
+  } else {
+    return req.headers['auth-key'];
+  }
+}
+
+function updateClientWhatsapp(key: string, client: Whatsapp) {
+  if (ClientSessions.has(key)) {
+    var sessions = ClientSessions.get(key);
+    if (sessions) {
+      var result = sessions.find(w => w.session === client.sessionId);
+      if (result) {
+        result.client = client;
+      }
+    }
+  }
+}
 
 function start(client) {
-  globalClient = client;
+  updateClientWhatsapp(auth_key, client);
+
   client.onStateChanged(state => {
     console.log('statechanged', state);
     if (state === 'CONFLICT') client.forceRefocus();
   });
+
   client.onAnyMessage(message => console.log(message.type));
+
   client.onMessage(async message => {
     try {
       /*
@@ -119,10 +196,11 @@ function start(client) {
           `You are at ${message.loc}`
         );
       } else {
-        // client.sendText(message.from, message.body);
+        
         // client.sendGiphy(message.from,'https://media.giphy.com/media/oYtVHSxngR3lC/giphy.gif','Oh my god it works');
       }
       */
+      client.sendText(message.from, message.body);
     } catch (error) {
       console.log('TCL: start -> error', error);
     }
@@ -133,19 +211,45 @@ function cuidToJid(cuid) {
   return cuid.indexOf('@') < 0 ? cuid + '@c.us' : cuid;
 }
 
+/*
 app.get('/getAllUnreadMessages', async (req, res) => {
   const newMessages = await globalClient.getAllUnreadMessages();
   return res.send(newMessages);
 });
+*/
 
 app.get('/isConnected', async (req, res) => {
-  if (globalClient) {
-    const states = await globalClient.getConnectionState();
+  const key = getRequestKey(req);
+  const sessions = getSessions(key);
+  if (sessions) {
+    var states = [];
+    sessions.forEach(async session => {
+      if (session.client) {
+        const status = await session.client.getConnectionState();
+        states.push({ session: session.session, status: status });
+      }
+    });
     return res.send(states);
   }
   return res.send('DISCONNECTED');
 });
 
+app.get('/isSessionConnected/:sessionid', async (req, res) => {
+  const key = getRequestKey(req);
+  const sessionid = req.params.sessionid;
+  const session = getSessionsBySessionId(key, sessionid);
+  if (session) {
+    var states = [];
+    if (session.client) {
+      const status = await session.client.getConnectionState();
+      states.push({ session: session.session, status: status });
+    }
+    return res.send(states);
+  }
+  return res.send('DISCONNECTED');
+});
+
+/*
 app.post(
   '/sendText',
   [check('id_unique').exists(), check('body').exists(), check('to').exists()],
@@ -172,7 +276,7 @@ app.post(
 
     const jid = cuidToJid(message.to);
 
-    /*
+    (*
     let contact;
     contact = await globalClient.checkNumberStatus(jid);
     if (!contact || contact === 404 || contact.status !== 200) {
@@ -181,7 +285,7 @@ app.post(
         ds_error: 'Whatsapp ' + message.to + ' não localizado.'
       });
     }
-    */
+    *)
 
     const newMessage = await globalClient.sendText(jid, message.body);
 
@@ -195,6 +299,8 @@ app.post(
     }
   }
 );
+
+*/
 
 app.listen(5000, function() {
   console.log('Example app listening on port 5000!');

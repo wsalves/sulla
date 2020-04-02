@@ -16,19 +16,38 @@ let waPage;
 let qrTimeout;
 
 /**
- * Should be called to initialize whatsapp client
- * @param sessionId Custom id for the session, every phone should have it's own sessionId.
+ * Should be called to initialize whatsapp client.
+ * *Note* You can send all params as a single object with the new [ConfigObject](https://smashah.github.io/sulla/interfaces/configobject.html) that includes both [sessionId](https://smashah.github.io/sulla/interfaces/configobject.html#sessionId) and [customUseragent](ttps://smashah.github.io/sulla/interfaces/configobject.html#customUseragent).
+ * 
+ * e.g
+ * 
+ * ```javascript
+ * create({
+ * sessionId: 'main',
+ * customUserAgent: ' 'WhatsApp/2.16.352 Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_1) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/13.0.3 Safari/605.1.15',
+ * blockCrashLogs true,
+ * ...
+ * })....
+ * ```
+ * @param sessionId [string | ConfigObject ]Custom id for the session, every phone should have it's own sessionId. THIS CAN BE THE CONFIG OBJECT INSTEAD
  * @param config The extended custom configuration
  * @param customUserAgent A custom user agent to set on the browser page.
  */
-export async function create(sessionId?: string, config?:ConfigObject, customUserAgent?:string) {
+//export async function create(sessionId?: string, config?:ConfigObject, customUserAgent?:string) {
+  //@ts-ignore
+  export async function create(sessionId?: any | ConfigObject, config?:ConfigObject, customUserAgent?:string) : Promise<Whatsapp> {
+    
+    if(typeof sessionId === 'object' && (sessionId as ConfigObject)) {
+    config = sessionId;
+    sessionId = config.sessionId;
+    customUserAgent = config.customUserAgent;
+    }
+    if (!sessionId) sessionId = 'session';
   const spinner = new Spin(sessionId,'STARTUP');
   try{
-
-  waPage = undefined;
-  qrTimeout = undefined;
-  shouldLoop = true;
-  if (!sessionId) sessionId = 'session';
+    waPage = undefined;
+    qrTimeout = undefined;
+    shouldLoop = true;
   spinner.start('Initializing whatsapp');
   waPage = await initWhatsapp(sessionId, config, customUserAgent);
   spinner.succeed();
@@ -141,8 +160,10 @@ const BROKEN_METHODS = await waPage.evaluate((checkList)=>{
     return eval(check)?false:true;
   })
 },uniq(fs.readFileSync(path.join(__dirname, '../lib', 'wapi.js'), 'utf8').match(/(Store[.\w]*)\(/g).map((x:string)=>x.replace("(",""))));
+//@ts-ignore
+const LANG_CHECK = await waPage.evaluate(()=>{if(window.l10n.localeStrings['en'])return window.l10n.localeStrings['en'][0].findIndex((x)=>x.toLowerCase()=='use here')==257;else return false;})
 if(BROKEN_METHODS.length>0) console.log("!!!!!BROKEN METHODS DETECTED!!!!\n\n\nPlease make a new issue in:\n\n https://github.com/smashah/sulla/issues \n\nwith the following title:\n\nBROKEN METHODS: ",WA_VERSION,"\n\nAdd this to the body of the issue:\n\n",BROKEN_METHODS,"\n\n\n!!!!!BROKEN METHODS DETECTED!!!!")
-
+if(!LANG_CHECK) console.log('Some language based features (e.g forceRefocus) are broken. Please report this in Github.')
 
     return new Whatsapp(waPage);
   }
@@ -161,6 +182,8 @@ if(BROKEN_METHODS.length>0) console.log("!!!!!BROKEN METHODS DETECTED!!!!\n\n\nP
 const kill = async () => {
   shouldLoop = false;
   if(qrTimeout) clearTimeout(qrTimeout);
-  if(waPage)await waPage.close();
-  if(waPage.browser())await waPage.browser().close();
+  if(waPage){
+    await waPage.close();
+    if(waPage.browser())await waPage.browser().close();
+  }
 }
