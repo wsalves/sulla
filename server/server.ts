@@ -91,6 +91,7 @@ function start(client) {
   client.onAnyMessage(message => console.log(message.type));
   client.onMessage(async message => {
     try {
+      /*
       const isConnected = await client.isConnected();
       console.log('TCL: start -> isConnected', isConnected);
       if (message.mimetype) {
@@ -121,6 +122,7 @@ function start(client) {
         // client.sendText(message.from, message.body);
         // client.sendGiphy(message.from,'https://media.giphy.com/media/oYtVHSxngR3lC/giphy.gif','Oh my god it works');
       }
+      */
     } catch (error) {
       console.log('TCL: start -> error', error);
     }
