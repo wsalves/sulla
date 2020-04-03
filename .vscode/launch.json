@@ -10,8 +10,7 @@
       "request": "launch",
       "cwd": "${workspaceFolder}",
       "runtimeExecutable": "npm",
-      "runtimeArgs": ["run", "build:server"],
-      "port": 9229
+      "runtimeArgs": ["run", "build:server"]
     }
   ]
 }

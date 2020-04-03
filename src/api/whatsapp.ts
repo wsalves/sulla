@@ -48,6 +48,7 @@ declare module WAPI {
   const onAddedToGroup: (callback: Function) => any;
   const onParticipantsChanged: (groupId: string, callback: Function) => any;
   const onLiveLocation: (chatId: string, callback: Function) => any;
+  const AddContactAndsendMessageReturnId: (id: string, message: string) => string;
   const sendMessage: (to: string, content: string) => string;
   const sendMessageWithMentions: (to: string, content: string) => string;
   const setChatState: (chatState: ChatState, chatId: string) => void;
@@ -144,8 +145,9 @@ export class Whatsapp {
   /**
    * @param page [Page] [Puppeteer Page]{@link https://pptr.dev/#?product=Puppeteer&version=v2.1.1&show=api-class-page} running web.whatsapp.com
    */
-  constructor(public page: Page) {
+  constructor(public page: Page, public sessionId: string) {
     this.page = page;
+    this.sessionId = sessionId;
   }
 
   /**

@@ -14,22 +14,20 @@ const tosBlockGuaranteed =
 const ON_DEATH = require('death');
 
 const auth_key = 'fe99caad-69c1-4831-b744-cf9b117dfc72';
-const session1 = '5534996876520';
-const session2 = '5534996876521';
-const session3 = '5534996876522';
+const session1 = '553492630155';
+const session2 = '553492804074';
+const session3 = '553492761721';
 
 const ClientSessions: Map<string, SessionWhatsapp[]> = new Map([
   [
     auth_key,
     [
-      new SessionWhatsapp(session1, null) //,
-      //new SessionWhatsapp(session2, null),
-      //new SessionWhatsapp(session3, null)
+      new SessionWhatsapp(session1, null),
+      new SessionWhatsapp(session2, null),
+      new SessionWhatsapp(session3, null)
     ]
   ]
 ]);
-
-//let globalClient: Whatsapp;
 
 const app = express();
 app.use(express.json());
@@ -55,6 +53,7 @@ ON_DEATH(async function(signal, err) {
   //if (globalClient) await globalClient.kill();
 });
 
+
 ev.on('qr.**', async (qrcode, sessionId) => {
   // console.log("TCL: qrcode", qrcode)
   //     console.log("TCL: qrcode,sessioId", qrcode,sessionId)
@@ -69,6 +68,7 @@ ev.on('qr.**', async (qrcode, sessionId) => {
   );
 });
 
+
 ev.on('**', async (data, sessionId, namespace) => {
   console.log('\n----------');
   console.log('EV', data, sessionId, namespace);
@@ -82,7 +82,7 @@ ev.on('sessionData.**', async (sessionData, sessionId) => {
 });
 
 const sullaParams = {
-  useChrome: false,
+  useChrome: true,
   headless: false,
   throwErrorOnTosBlock: true,
   killTimer: 40,
@@ -90,34 +90,29 @@ const sullaParams = {
   qrRefreshS: 15
 };
 
-ClientSessions.forEach((value, key) => {
-  const sessions = ClientSessions.get(key);
-  if (sessions) {
-    sessions.forEach(session => {
-      console.log('session: ', session);
-      create(session.session, sullaParams)
-        .then(async client => await start(client))
-        .catch(e => {
-          console.log('Error', e.message);
-        });
-    });
-  }
-});
-/*
-  
-  console.log('sessions: ', sessions);
-  for (var session in sessions) {
-    //@ts-ignore
-    console.log('session.session: ', session.session);
-    //@ts-ignore
-    create(session.session, sullaParams)
-      .then(async client => await start(client))
+function createNextSession() {
+  var nextSession = getNextDisconnectedSession();
+  if (nextSession){
+    create(nextSession.session, sullaParams)
+      .then(async client => {
+        await start(client);
+      })
       .catch(e => {
         console.log('Error', e.message);
       });
   }
 }
-*/
+
+
+
+function getNextDisconnectedSession(): SessionWhatsapp {
+  var sessions = getSessions(auth_key);
+  if (sessions) {
+      return sessions.find(w => w.client == null);
+  }
+  return null;
+}
+
 
 function getSessions(key: string): SessionWhatsapp[] {
   if (ClientSessions.has(key)) {
@@ -157,20 +152,25 @@ function updateClientWhatsapp(key: string, client: Whatsapp) {
 }
 
 function start(client) {
+  
   updateClientWhatsapp(auth_key, client);
+
+  createNextSession();
 
   client.onStateChanged(state => {
     console.log('statechanged', state);
     if (state === 'CONFLICT') client.forceRefocus();
   });
 
-  client.onAnyMessage(message => console.log(message.type));
+  //client.onAnyMessage(message => console.log(message.type));
 
   client.onMessage(async message => {
     try {
-      /*
       const isConnected = await client.isConnected();
-      console.log('TCL: start -> isConnected', isConnected);
+      console.log('TCL: start -> SessionId: %s isConnected: %s', client.sessioId, isConnected);
+      //client.sendText(message.from, "Está é uma mensagem automática. favor não responder.");
+
+      /*
       if (message.mimetype) {
         const filename = `${message.t}.${mime.extension(message.mimetype)}`;
         const mediaData = await decryptMedia(message, uaOverride);
@@ -199,8 +199,8 @@ function start(client) {
         
         // client.sendGiphy(message.from,'https://media.giphy.com/media/oYtVHSxngR3lC/giphy.gif','Oh my god it works');
       }
-      */
       client.sendText(message.from, message.body);
+      */
     } catch (error) {
       console.log('TCL: start -> error', error);
     }
@@ -218,20 +218,24 @@ app.get('/getAllUnreadMessages', async (req, res) => {
 });
 */
 
+
 app.get('/isConnected', async (req, res) => {
   const key = getRequestKey(req);
   const sessions = getSessions(key);
   if (sessions) {
     var states = [];
-    sessions.forEach(async session => {
+    for (let index = 0; index < sessions.length; index++) {
+      const session = sessions[index]; 
       if (session.client) {
-        const status = await session.client.getConnectionState();
-        states.push({ session: session.session, status: status });
+          const status = await session.client.getConnectionState();
+          states.push({ session: session.session, status: status });
+      }else{
+        states.push({ session: session.session, status: 'DISCONNECTED' });
       }
-    });
+    };
     return res.send(states);
   }
-  return res.send('DISCONNECTED');
+  return res.send({ session: 'UNKNOWN', status: 'DISCONNECTED' });
 });
 
 app.get('/isSessionConnected/:sessionid', async (req, res) => {
@@ -243,40 +247,43 @@ app.get('/isSessionConnected/:sessionid', async (req, res) => {
     if (session.client) {
       const status = await session.client.getConnectionState();
       states.push({ session: session.session, status: status });
+    }else{
+      states.push({ session: session.session, status: 'DISCONNECTED' });
     }
     return res.send(states);
   }
-  return res.send('DISCONNECTED');
+  return res.send({ session: 'UNKNOWN', status: 'DISCONNECTED' });
 });
 
-/*
 app.post(
   '/sendText',
-  [check('id_unique').exists(), check('body').exists(), check('to').exists()],
+  [check('id_unique').exists(), check('body').exists(), check('from').exists(), check('to').exists()],
   async (req, res) => {
     const errors = validationResult(req);
     if (!errors.isEmpty()) {
       return res.status(422).json({ errors: errors.array() });
     }
 
-    if (!globalClient || globalClient == null) {
-      return res.send({ cd_error: 1, ds_error: 'Instância não está ativa!' });
+    console.log('body is ', req.body);
+    const message = req.body;
+
+    const key = getRequestKey(req);
+    const sessionid = message.from;
+    const session = getSessionsBySessionId(key, sessionid);
+    if (!session || !session.client) {
+      return res.send({ cd_error: 1, ds_error: 'Instância não está ativa ou não localizada!' });
     }
 
-    const states = await globalClient.getConnectionState();
+    const states = await session.client.getConnectionState();
     if (states !== 'CONNECTED') {
       return res.send({
         cd_error: 2,
         ds_error: 'Instância está em modo ' + states
       });
     }
-
-    console.log('body is ', req.body);
-    const message = req.body;
-
     const jid = cuidToJid(message.to);
 
-    (*
+    /*
     let contact;
     contact = await globalClient.checkNumberStatus(jid);
     if (!contact || contact === 404 || contact.status !== 200) {
@@ -285,9 +292,9 @@ app.post(
         ds_error: 'Whatsapp ' + message.to + ' não localizado.'
       });
     }
-    *)
+    */
 
-    const newMessage = await globalClient.sendText(jid, message.body);
+    const newMessage = await session.client.sendText(jid, message.body);
 
     if (newMessage) {
       return res.send({ cd_error: 0 });
@@ -300,8 +307,7 @@ app.post(
   }
 );
 
-*/
-
 app.listen(5000, function() {
   console.log('Example app listening on port 5000!');
+  createNextSession();
 });
