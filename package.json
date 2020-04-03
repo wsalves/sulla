@@ -79,6 +79,7 @@
     "futoin-hkdf": "^1.2.1",
     "image-type": "^4.1.0",
     "lodash.uniq": "^4.5.0",
+    "mysql": "^2.18.1",
     "ora": "^4.0.2",
     "puppeteer": "^2.1.1",
     "puppeteer-extra": "^3.1.9",

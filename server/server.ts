@@ -4,8 +4,10 @@ const { check, validationResult } = require('express-validator');
 //const sulla = require('sulla-hotfix');
 import { create, Whatsapp, decryptMedia, ev } from '../src/index';
 import { SessionWhatsapp } from './sessions';
+import { Database } from './database';
 const mime = require('mime-types');
 const fs = require('fs');
+const mysql = require('mysql');
 
 const uaOverride =
   'WhatsApp/2.16.352 Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_1) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/13.0.3 Safari/605.1.15';
@@ -151,12 +153,30 @@ function updateClientWhatsapp(key: string, client: Whatsapp) {
   }
 }
 
-function start(client) {
+async function start(client) {
   
   updateClientWhatsapp(auth_key, client);
-
+  
   createNextSession();
 
+  const unreadMessages = await client.getAllUnreadMessages();
+  if (unreadMessages && unreadMessages.length > 0) {
+    var chatsIds = unreadMessages.reduce(function (r, a) {
+      if (!r.includes(a.from)) {
+        r.push(a.from);
+      }
+      return r;
+    }, []);
+
+    if (chatsIds && chatsIds.length > 0){
+      chatsIds.forEach((message) => {
+        sendResponseChatId(client, message);  
+      });
+
+    }
+
+  }
+  
   client.onStateChanged(state => {
     console.log('statechanged', state);
     if (state === 'CONFLICT') client.forceRefocus();
@@ -167,40 +187,14 @@ function start(client) {
   client.onMessage(async message => {
     try {
       const isConnected = await client.isConnected();
-      console.log('TCL: start -> SessionId: %s isConnected: %s', client.sessioId, isConnected);
-      //client.sendText(message.from, "Está é uma mensagem automática. favor não responder.");
-
-      /*
-      if (message.mimetype) {
-        const filename = `${message.t}.${mime.extension(message.mimetype)}`;
-        const mediaData = await decryptMedia(message, uaOverride);
-        // client.sendImage(message.from,`data:${message.mimetype};base64,${mediaData.toString('base64')}`,filename,`You just sent me this ${message.type}`);
-        // client.forwardMessages(message.from,message,false);
-        fs.writeFile(filename, mediaData, function(err) {
-          if (err) {
-            return console.log(err);
-          }
-          console.log('The file was saved!');
-        });
-      } else if (message.type === 'location') {
-        console.log(
-          'TCL: location -> message',
-          message.lat,
-          message.lng,
-          message.loc
-        );
-        await client.sendLocation(
-          message.from,
-          `${message.lat}`,
-          `${message.lng}`,
-          `You are at ${message.loc}`
-        );
-      } else {
-        
-        // client.sendGiphy(message.from,'https://media.giphy.com/media/oYtVHSxngR3lC/giphy.gif','Oh my god it works');
-      }
-      client.sendText(message.from, message.body);
-      */
+      if (isConnected){
+          console.log(
+            'TCL: start -> SessionId: %s isConnected: %s',
+            client.sessionId,
+            isConnected
+          );
+          sendResponseChatId(client, message.from);  
+        }
     } catch (error) {
       console.log('TCL: start -> error', error);
     }
@@ -209,6 +203,45 @@ function start(client) {
 
 function cuidToJid(cuid) {
   return cuid.indexOf('@') < 0 ? cuid + '@c.us' : cuid;
+}
+
+
+function getLastUniqueIdChat(client: Whatsapp, chatId: string) {
+  return new Promise((resolve, reject ) => {
+    client.getAllMessagesInChat(chatId, true, false).then(async (mensagens) => {
+      const connection = createConnection();
+      if (mensagens && mensagens.length > 0) {
+        const msgReverse = mensagens.reverse();
+        for (let index = 0; index < msgReverse.length; index++) {
+          const mensagem = msgReverse[index];
+          if (mensagem.sender.isMe) {
+            const result = await connection.query(`SELECT id_cliente FROM tbl_mensagem where id_integracao = '${mensagem.id}' limit 1`);
+            //@ts-ignore
+            if (result && result.length > 0){
+              return resolve(result[0].id_cliente);
+            }
+          }
+        }
+      }  
+      return resolve(null);    
+    });
+  });
+}
+
+function sendResponseChatId(client: Whatsapp, chatId: string) {
+  getLastUniqueIdChat(client, chatId).then((value) => {
+    if (value) {
+      client.sendText(
+        chatId,
+        'Esta mensagem foi enviada pelo nosso atendente virtual, por favor entre em contato pelos telefones descritos na mensagem. Utilizaremos mais este canal de comunicação para nos mantermos sempre próximos e deixá-lo(a) informado das suas consultas e benefícios!'
+      );
+    } else {
+      client.sendText(
+        chatId,
+        'Esta mensagem foi enviada pelo nosso atendente virtual, por favor entre em contato pelos telefones descritos na mensagem. Utilizaremos mais este canal de comunicação para nos mantermos sempre próximos e deixá-lo(a) informado das suas consultas e benefícios!'
+      );
+    }
+  });  
 }
 
 
@@ -330,7 +363,15 @@ app.post(
     const newMessage = await session.client.sendText(jid, message.body);
 
     if (newMessage) {
-      return res.send({ cd_error: 0, id: newMessage });
+      try {
+        await insertMessage(message.body, message.from, message.to, message.id_unique, newMessage);
+        return res.send({ cd_error: 0, id: newMessage});  
+      } catch (error) {
+        return res.send({
+          cd_error: 999,
+          ds_error: error,
+        });
+      }
     } else {
       return res.send({
         cd_error: 3,
@@ -341,6 +382,24 @@ app.post(
 );
 
 app.listen(5000, function() {
-  console.log('Example app listening on port 5000!');
+  console.log('App listening on port 5000!');
   createNextSession();
 });
+
+function insertMessage(ds_mensagem: string, ds_from: string, ds_to: string, id_cliente: string, id_integracao: string) {
+  const connection = createConnection();
+  return connection.query(`insert into tbl_mensagem(ds_mensagem, ds_from, ds_to, id_cliente, id_integracao) values ('${ds_mensagem}','${ds_from}','${ds_to}','${id_cliente}','${id_integracao}')`);
+}
+
+function createConnection(){
+  return new Database({
+    connectionLimit: 10,
+    host: 'dbmysqltreinamento.cue5nkbghdzf.sa-east-1.rds.amazonaws.com',
+    port: 3306,
+    user: 'user_marketing',
+    password: '*RD04dm06#',
+    database: 'db_marketing',
+  });
+}
+
+
