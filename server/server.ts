@@ -211,12 +211,26 @@ function cuidToJid(cuid) {
   return cuid.indexOf('@') < 0 ? cuid + '@c.us' : cuid;
 }
 
-/*
+
 app.get('/getAllUnreadMessages', async (req, res) => {
-  const newMessages = await globalClient.getAllUnreadMessages();
-  return res.send(newMessages);
+  const key = getRequestKey(req);
+  const sessions = getSessions(key);
+  if (sessions) {
+    var result = [];
+    for (let index = 0; index < sessions.length; index++) {
+      const session = sessions[index]; 
+      if (session.client) {
+          const newMessages = await session.client.getAllUnreadMessages();
+          result.push({ session: session.session, data: newMessages });
+      }else{
+        result.push({ session: session.session, data: null });
+      }
+    };
+    return res.send(result);
+  }
+  return res.send({ session: 'UNKNOWN', data: null });
 });
-*/
+
 
 
 app.get('/isConnected', async (req, res) => {
@@ -254,6 +268,25 @@ app.get('/isSessionConnected/:sessionid', async (req, res) => {
   }
   return res.send({ session: 'UNKNOWN', status: 'DISCONNECTED' });
 });
+
+app.get('/getSessionAllUnreadMessages/:sessionid', async (req, res) => {
+
+  const key = getRequestKey(req);
+  const sessionid = req.params.sessionid;
+  const session = getSessionsBySessionId(key, sessionid);
+  if (session) {
+    var result = [];
+    if (session.client) {
+      const newMessages = await session.client.getAllUnreadMessages();
+      result.push({ session: session.session, data: newMessages });
+    } else {
+      result.push({ session: session.session, data: null });
+    }
+    return res.send(result);
+  }
+  return res.send({ session: 'UNKNOWN', data: null });
+});
+
 
 app.post(
   '/sendText',
@@ -297,7 +330,7 @@ app.post(
     const newMessage = await session.client.sendText(jid, message.body);
 
     if (newMessage) {
-      return res.send({ cd_error: 0 });
+      return res.send({ cd_error: 0, id: newMessage });
     } else {
       return res.send({
         cd_error: 3,

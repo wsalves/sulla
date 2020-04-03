@@ -957,11 +957,15 @@ window.WAPI.sendMessageReturnId = async function (ch, body) {
 window.WAPI.AddContactAndsendMessageReturnId = async function (id, message) {
     const contact = await window.Store.WapQuery.queryExist(id);
     if (contact && contact.jid) {
-        chat = window.Store.Chat.gadd(contact.jid);
-        chat.sendMessage = (chat.sendMessage ? chat.sendMessage : function(e) { 
-            return window.Store.SendTextMsgToChat(this, ...arguments); 
-        });
-        return await WAPI.sendMessageReturnId(chat,message);
+        window.Store.Chat.gadd(contact.jid);
+        var chat = WAPI.getChat(id);
+        if (chat) {
+            return chat.sendMessage(message).then(_=>chat.lastReceivedKey._serialized);
+        }
+        //chat.sendMessage = (chat.sendMessage ? chat.sendMessage : function(e) { 
+        //    return window.Store.SendTextMsgToChat(this, ...arguments); 
+        //});
+        //return await WAPI.sendMessageReturnId(chat,message);
     }
     return null;    
 }
