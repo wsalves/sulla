@@ -1,13 +1,12 @@
 const express = require('express');
 const { check, validationResult } = require('express-validator');
+var request = require('request');
 
 //const sulla = require('sulla-hotfix');
 import { create, Whatsapp, decryptMedia, ev } from '../src/index';
-import { SessionWhatsapp } from './sessions';
+import { SessionWhatsapp, RequisicaoRespostaWhatsapp, RespostasWhatsapp } from './sessions';
 import { Database } from './database';
-const mime = require('mime-types');
 const fs = require('fs');
-const mysql = require('mysql');
 
 const uaOverride =
   'WhatsApp/2.16.352 Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_1) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/13.0.3 Safari/605.1.15';
@@ -52,6 +51,7 @@ app.use(function(req, res, next) {
 
 ON_DEATH(async function(signal, err) {
   console.log('killing session');
+  killAllSessions();
   //if (globalClient) await globalClient.kill();
 });
 
@@ -172,9 +172,7 @@ async function start(client) {
       chatsIds.forEach((message) => {
         sendResponseChatId(client, message);  
       });
-
     }
-
   }
   
   client.onStateChanged(state => {
@@ -208,6 +206,7 @@ function cuidToJid(cuid) {
 
 function getLastUniqueIdChat(client: Whatsapp, chatId: string) {
   return new Promise((resolve, reject ) => {
+    var requisicao = new RequisicaoRespostaWhatsapp();
     client.getAllMessagesInChat(chatId, true, false).then(async (mensagens) => {
       const connection = createConnection();
       if (mensagens && mensagens.length > 0) {
@@ -218,8 +217,13 @@ function getLastUniqueIdChat(client: Whatsapp, chatId: string) {
             const result = await connection.query(`SELECT id_cliente FROM tbl_mensagem where id_integracao = '${mensagem.id}' limit 1`);
             //@ts-ignore
             if (result && result.length > 0){
-              return resolve(result[0].id_cliente);
+              requisicao.Cd_Requisicao = result[0].id_cliente;
+              requisicao.Respostas = requisicao.Respostas.reverse();
+              return resolve(requisicao);
             }
+          }else{
+            //@ts-ignore
+            requisicao.Respostas.push(new RespostasWhatsapp(mensagem.body, new Date(mensagem.t*1000), mensagem.to.user));
           }
         }
       }  
@@ -229,12 +233,55 @@ function getLastUniqueIdChat(client: Whatsapp, chatId: string) {
 }
 
 function sendResponseChatId(client: Whatsapp, chatId: string) {
-  getLastUniqueIdChat(client, chatId).then((value) => {
-    if (value) {
-      client.sendText(
-        chatId,
-        'Esta mensagem foi enviada pelo nosso atendente virtual, por favor entre em contato pelos telefones descritos na mensagem. Utilizaremos mais este canal de comunicação para nos mantermos sempre próximos e deixá-lo(a) informado das suas consultas e benefícios!'
-      );
+  getLastUniqueIdChat(client, chatId).then((value : RequisicaoRespostaWhatsapp) => {
+    if (value && value.Cd_Requisicao) {
+      postPollRespostaAutomatica(value).then(async (response) => {
+        //@ts-ignore
+        if (response && response.Cd_Erro === 0) {
+          //@ts-ignore
+          if (response.Requisicoes && response.Requisicoes.length > 0) {
+            //@ts-ignore
+            var result = await sendMessageText(
+              auth_key,
+              //@ts-ignore
+              response.Requisicoes[0].Cd_Requisicao,
+              //@ts-ignore
+              response.Requisicoes[0].Nr_Envio,
+              //@ts-ignore
+              formatWhatsNumberAndContryCode(response.Requisicoes[0].Nr_Destino),
+              //@ts-ignore
+              response.Requisicoes[0].Ds_Mensagem
+            );
+          }
+
+          //@ts-ignore
+          if (response.Requisicoes && response.Requisicoes.length > 1) {
+            //@ts-ignore
+            var result = await sendMessageText(
+              auth_key,
+              //@ts-ignore
+              response.Requisicoes[1].Cd_Requisicao,
+              //@ts-ignore
+              response.Requisicoes[1].Nr_Envio,
+              //@ts-ignore
+              formatWhatsNumberAndContryCode(response.Requisicoes[1].Nr_Destino),
+              //@ts-ignore
+              response.Requisicoes[1].Ds_Mensagem
+            );
+          }
+        } else {
+          //@ts-ignore
+          client.sendText(
+            chatId,
+            'Esta mensagem foi enviada pelo nosso atendente virtual, por favor entre em contato pelos telefones descritos na mensagem. Utilizaremos mais este canal de comunicação para nos mantermos sempre próximos e deixá-lo(a) informado das suas consultas e benefícios!'
+          );
+        }
+      }).catch((error) => {
+        client.sendText(
+          chatId,
+          'Esta mensagem foi enviada pelo nosso atendente virtual, por favor entre em contato pelos telefones descritos na mensagem. Utilizaremos mais este canal de comunicação para nos mantermos sempre próximos e deixá-lo(a) informado das suas consultas e benefícios!'
+        );
+      });
     } else {
       client.sendText(
         chatId,
@@ -242,6 +289,17 @@ function sendResponseChatId(client: Whatsapp, chatId: string) {
       );
     }
   });  
+}
+
+function killAllSessions(){
+  var sessions = getSessions(auth_key);
+  if (sessions && sessions.length > 0){
+    sessions.forEach((session) => {
+      if (session && session.client) {
+        session.client.kill();
+      }
+    });
+  }
 }
 
 
@@ -329,55 +387,20 @@ app.post(
     if (!errors.isEmpty()) {
       return res.status(422).json({ errors: errors.array() });
     }
+    const key = getRequestKey(req);
 
     console.log('body is ', req.body);
     const message = req.body;
 
-    const key = getRequestKey(req);
-    const sessionid = message.from;
-    const session = getSessionsBySessionId(key, sessionid);
-    if (!session || !session.client) {
-      return res.send({ cd_error: 1, ds_error: 'Instância não está ativa ou não localizada!' });
-    }
-
-    const states = await session.client.getConnectionState();
-    if (states !== 'CONNECTED') {
-      return res.send({
-        cd_error: 2,
-        ds_error: 'Instância está em modo ' + states
-      });
-    }
-    const jid = cuidToJid(message.to);
-
-    /*
-    let contact;
-    contact = await globalClient.checkNumberStatus(jid);
-    if (!contact || contact === 404 || contact.status !== 200) {
-      return res.send({
-        cd_error: 3,
-        ds_error: 'Whatsapp ' + message.to + ' não localizado.'
-      });
-    }
-    */
-
-    const newMessage = await session.client.sendText(jid, message.body);
-
-    if (newMessage) {
-      try {
-        await insertMessage(message.body, message.from, message.to, message.id_unique, newMessage);
-        return res.send({ cd_error: 0, id: newMessage});  
-      } catch (error) {
-        return res.send({
-          cd_error: 999,
-          ds_error: error,
-        });
-      }
-    } else {
-      return res.send({
-        cd_error: 3,
-        ds_error: 'Whatsapp ' + message.to + ' não localizado.'
-      });
-    }
+    return res.send(
+      await sendMessageText(
+        key,
+        message.id_unique,
+        message.from,
+        message.to,
+        message.body
+      )
+    );
   }
 );
 
@@ -385,6 +408,65 @@ app.listen(5000, function() {
   console.log('App listening on port 5000!');
   createNextSession();
 });
+
+
+async function sendMessageText(key: string, id_unique: string, from: string, to: string, body: string) {
+  const sessionid = from;
+  const session = getSessionsBySessionId(key, sessionid);
+  if (!session || !session.client) {
+    return {
+      cd_error: 1,
+      ds_error: 'Instância não está ativa ou não localizada!',
+    };
+  }
+
+  const states = await session.client.getConnectionState();
+  if (states !== 'CONNECTED') {
+    return {
+      cd_error: 2,
+      ds_error: 'Instância está em modo ' + states,
+    };
+  }
+  const jid = cuidToJid(to);
+  
+  const newMessage = await session.client.sendText(jid, body);
+  if (newMessage) {
+    try {
+      await insertMessage(
+        body,
+        from,
+        to,
+        id_unique,
+        newMessage
+      );
+      return ({ cd_error: 0, id: newMessage });
+    } catch (error) {
+      return ({
+        cd_error: 999,
+        ds_error: error,
+      });
+    }
+  } else {
+    return ({
+      cd_error: 3,
+      ds_error: 'Whatsapp ' + to + ' não localizado.',
+    });
+  }
+}
+
+
+function formatWhatsNumberAndContryCode(to: string, default_contry: string = '55'){
+  // verifica se existe o contry code
+  if (to && to.length <= 11){
+    to = default_contry + to; 
+  }
+  //possui 9 digito a mais.
+  if (to && to.length == 13) {
+    to = to.substring(0, 4) + to.substring(5);
+  }
+
+  return to;
+}
 
 function insertMessage(ds_mensagem: string, ds_from: string, ds_to: string, id_cliente: string, id_integracao: string) {
   const connection = createConnection();
@@ -402,4 +484,45 @@ function createConnection(){
   });
 }
 
+function postPollRespostaAutomatica(value: RequisicaoRespostaWhatsapp) {
 
+  const data = {
+    RequisicaoRespostas: [
+      {
+        Cd_Requisicao: value.Cd_Requisicao,
+        Respostas: [],
+      },
+    ],
+  };
+
+  value.Respostas.forEach((resposta) => {
+    data.RequisicaoRespostas[0].Respostas.push({
+      Cd_Requisicao: value.Cd_Requisicao,
+      Ds_Resposta: resposta.Ds_Resposta,
+      Dt_Resposta: `\/Date(${resposta.Dt_Resposta.getTime()})\/`,
+      Nr_Envio: resposta.Nr_Envio,
+    });
+  })
+  
+  return new Promise((resolve, reject ) => {
+    request.post(
+      'http://sms.prospexti.com.br/WcfServiceSMSGateway.svc/rest/RequisitarPollEnvioRespostaAutomatica',
+      { json: data },
+      function (error, response, body) {
+        try {
+          if (!error && response.statusCode == 200) {
+            return resolve(body);
+          } else {
+            if (error) {
+              return reject(error);
+            } else {
+              return reject({ code: response.statusCode });
+            }
+          }  
+        } catch (error) {
+          return reject({ code: 99, ds_error: error });
+        }
+      }
+    );
+  });
+}
