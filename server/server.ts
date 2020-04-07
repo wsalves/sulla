@@ -8,14 +8,13 @@ import { SessionWhatsapp, RequisicaoRespostaWhatsapp, RespostasWhatsapp } from '
 import { Database } from './database';
 const fs = require('fs');
 
-const uaOverride =
-  'WhatsApp/2.16.352 Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_1) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/13.0.3 Safari/605.1.15';
-const tosBlockGuaranteed =
-  'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) HeadlessChrome/79.0.3945.88 Safari/537.36';
+const uaOverride = 'WhatsApp/0.4.2088 Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/80.0.3987.122 Safari/537.36';
+//const uaOverride ='WhatsApp/0.4.2088 Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/80.0.3987.132 Safari/537.36';
+const tosBlockGuaranteed = 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/80.0.3987.132 Safari/537.36';
 const ON_DEATH = require('death');
 
 const auth_key = 'fe99caad-69c1-4831-b744-cf9b117dfc72';
-const session1 = '553492630155';
+const session1 = '553499577178';
 const session2 = '553492804074';
 const session3 = '553492761721';
 
@@ -23,9 +22,9 @@ const ClientSessions: Map<string, SessionWhatsapp[]> = new Map([
   [
     auth_key,
     [
-      new SessionWhatsapp(session1, null),
-      new SessionWhatsapp(session2, null),
-      new SessionWhatsapp(session3, null)
+      new SessionWhatsapp(session1, null)//,
+      //new SessionWhatsapp(session2, null)//,
+      //new SessionWhatsapp(session3, null)
     ]
   ]
 ]);
@@ -85,21 +84,21 @@ ev.on('sessionData.**', async (sessionData, sessionId) => {
 
 const sullaParams = {
   useChrome: true,
-  headless: false,
+  headless: true,
   throwErrorOnTosBlock: true,
   killTimer: 40,
   autoRefresh: true, //default to true
-  qrRefreshS: 15
+  qrRefreshS: 15,
 };
 
 function createNextSession() {
   var nextSession = getNextDisconnectedSession();
   if (nextSession){
-    create(nextSession.session, sullaParams)
-      .then(async client => {
+    create(nextSession.session, sullaParams, uaOverride)
+      .then(async (client) => {
         await start(client);
       })
-      .catch(e => {
+      .catch((e) => {
         console.log('Error', e.message);
       });
   }
@@ -191,7 +190,9 @@ async function start(client) {
             client.sessionId,
             isConnected
           );
+
           sendResponseChatId(client, message.from);  
+          
         }
     } catch (error) {
       console.log('TCL: start -> error', error);
@@ -428,8 +429,26 @@ async function sendMessageText(key: string, id_unique: string, from: string, to:
     };
   }
   const jid = cuidToJid(to);
+
   
-  const newMessage = await session.client.sendText(jid, body);
+  let contact;
+  contact = await session.client.checkNumberStatus(jid);
+  console.log('contact = ', contact);
+  if (!contact || contact === 404 || contact.status !== 200 || !contact.numberExists) {
+    return {
+      cd_error: 3,
+      ds_error: 'Whatsapp ' + to + ' não localizado.',
+    };
+  }else{
+    if (!contact.canReceiveMessage){
+      return {
+        cd_error: 3,
+        ds_error: 'Whatsapp ' + to + ' não pode receber mensagens.',
+      };
+    }
+  }
+
+  const newMessage = await session.client.sendText(contact.id._serialized, body);
   if (newMessage) {
     try {
       await insertMessage(
@@ -452,6 +471,7 @@ async function sendMessageText(key: string, id_unique: string, from: string, to:
       ds_error: 'Whatsapp ' + to + ' não localizado.',
     });
   }
+  
 }
 
 

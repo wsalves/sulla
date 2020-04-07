@@ -45,7 +45,9 @@ declare module WAPI {
   const waitNewMessages: (rmCallback: boolean, callback: Function) => void;
   const addAllNewMessagesListener: (callback: Function) => void;
   const onStateChanged: (callback: Function) => void;
+  const onIncomingCall: (callback: Function) => any;
   const onAddedToGroup: (callback: Function) => any;
+  const onBattery: (callback: Function) => any;
   const onParticipantsChanged: (groupId: string, callback: Function) => any;
   const onLiveLocation: (chatId: string, callback: Function) => any;
   const AddContactAndsendMessageReturnId: (id: string, message: string) => string;
@@ -59,14 +61,19 @@ declare module WAPI {
   const addParticipant: (groupId: string, contactId: string) => void;
   const setMyName: (newName: string) => void;
   const setMyStatus: (newStatus: string) => void;
+  const setPresence: (available: boolean) => void;
   const getStatus: (contactId: string) => void;
   const getGroupAdmins: (groupId: string) => Contact[];
   const removeParticipant: (groupId: string, contactId: string) => void;
+  const addOrRemoveLabels: (label: string, id: string, type: string) => Promise<boolean>;
   const promoteParticipant: (groupId: string, contactId: string) => void;
   const demoteParticipant: (groupId: string, contactId: string) => void;
   const sendImageAsSticker: (webpBase64: string, to: string, metadata?: any) => void;
   const createGroup: (groupName: string, contactId: string|string[]) => Promise<any>;
   const sendSeen: (to: string) => void;
+  const isChatOnline: (id: string) => Promise<boolean>;
+  const contactBlock: (id: string) => void;
+  const contactUnblock: (id: string) => void;
   const deleteConversation: (chatId: string) => boolean;
   const clearChat: (chatId: string) => void;
   const revokeGroupInviteLink: (chatId: string) => Promise<string> | boolean;
@@ -86,6 +93,7 @@ declare module WAPI {
   ) => void;
   const getBusinessProfilesProducts: (to: string) => any;
   const sendImageWithProduct: (base64: string, to: string, caption: string, bizNumber: string, productId: string) => any;
+  const sendVCard: (chatId: string, vcardString: string, contactName: string) => Promise<boolean>;
   const sendFile: (
     base64: string,
     to: string,
@@ -174,6 +182,19 @@ export class Whatsapp {
       }));
   }
 
+  /** @event Listens to battery changes
+   * @param fn callback
+   * @fires number
+   */
+  public async onBattery(fn: (battery:number) => void) {
+    this.page.exposeFunction('onBattery', (battery: number) =>
+      fn(battery)
+    ).then(_ => this.page.evaluate(
+      () => {
+        WAPI.onBattery(window["onBattery"]);
+      }));
+  }
+
   /**
    * @event Listens to messages received
    * @returns Observable stream of messages
@@ -187,6 +208,31 @@ export class Whatsapp {
       }));
   }
 
+
+  /**
+   * @event Listens to new incoming calls
+   * @returns Observable stream of call request objects
+   */
+  public onIncomingCall(fn: (call: any) => void) {
+    this.page.exposeFunction('onIncomingCall', (call: any) =>
+      fn(call)
+    ).then(_ => this.page.evaluate(
+      () => {
+        WAPI.onIncomingCall(call => window['onIncomingCall'](call))
+      }));
+  }
+
+  /**
+   * Set presence to available or unavailable.
+   * @param available if true it will set your presence to 'online', false will set to unabailable (i.e no 'online' on recipients' phone);
+   */
+  public async setPresence(available: boolean) {
+    return await this.page.evaluate(
+      available => {WAPI.setPresence(available)},
+      available
+      )
+  }
+
   /**
    * set your about me
    * @param newStatus String new profile status
@@ -195,6 +241,44 @@ export class Whatsapp {
     return await this.page.evaluate(
       ({newStatus}) => {WAPI.setMyStatus(newStatus)},
       {newStatus}
+      )
+  }
+
+  /**
+   * Adds label from chat, message or contact. Only for business accounts.
+   * @param label: either the id or the name of the label. id will be something simple like anhy nnumber from 1-10, name is the label of the label if that makes sense.
+   * @param id The Chat, message or contact id to which you want to add a label
+   */
+  public async addLabel(label: string, id: string) {
+    return await this.page.evaluate(
+      ({label, id}) => {WAPI.addOrRemoveLabels(label, id, 'add')},
+      {label, id}
+      )
+  }
+
+  /**
+   * Removes label from chat, message or contact. Only for business accounts.
+   * @param label: either the id or the name of the label. id will be something simple like anhy nnumber from 1-10, name is the label of the label if that makes sense.
+   * @param id The Chat, message or contact id to which you want to add a label
+   */
+  public async removeLabel(label: string, id: string) {
+    return await this.page.evaluate(
+      ({label, id}) => {WAPI.addOrRemoveLabels(label, id, 'remove')},
+      {label, id}
+      )
+  }
+
+/**
+ * Send VCARD
+ *
+ * @param {string} chatId '000000000000@c.us'
+ * @param {string} vcard vcard as a string
+ * @param {string} contactName The display name for the contact. CANNOT BE NULL OTHERWISE IT WILL SEND SOME RANDOM CONTACT FROM YOUR ADDRESS BOOK.
+ */
+  public async sendVCard(chatId: string, vcard: string, contactName:string) {
+    return await this.page.evaluate(
+      ({chatId, vcard, contactName}) => {WAPI.sendVCard(chatId, vcard,contactName)},
+      {chatId, vcard, contactName}
       )
   }
 
@@ -241,6 +325,7 @@ export class Whatsapp {
     );
   }
 
+
   /**
    * Shuts down the page and browser
    * @returns true
@@ -255,7 +340,7 @@ export class Whatsapp {
   public async forceRefocus() {
     //255 is the address of 'use here'
     //@ts-ignore
-    const useHere: string = await this.page.evaluate(() => { return window.l10n.localeStrings[window.l10n._locale.l][0][window.l10n.localeStrings['en']?.[0].findIndex((x:string)=>x.toLowerCase()=='use here') || 257] });
+    const useHere: string = await this.page.evaluate(() => { return window.l10n.localeStrings[window.l10n._locale.l][0][window.l10n.localeStrings['en']?.[0].findIndex((x:string)=>x.toLowerCase()=='use here') || 260] });
     await this.page.waitForFunction(
       `[...document.querySelectorAll("div[role=button")].find(e=>{return e.innerHTML.toLowerCase()==="${useHere.toLowerCase()}"})`,
       { timeout: 0 }
@@ -696,6 +781,23 @@ export class Whatsapp {
     );
   }
 
+
+/**
+ * Block contact 
+ * @param {string} id '000000000000@c.us'
+ */
+public async contactBlock(id: string) {
+  return await this.page.evaluate(id => WAPI.contactBlock(id),id)
+}
+
+/**
+ * Unblock contact 
+ * @param {string} id '000000000000@c.us'
+ */
+public async contactUnblock(id: string) {
+  return await this.page.evaluate(id => WAPI.contactUnblock(id),id)
+}
+
   /**
    * Removes the host device from the group
    * @param groupId group id
@@ -776,6 +878,17 @@ export class Whatsapp {
   public async sendSeen(chatId: string) {
     return await this.page.evaluate(
      chatId => WAPI.sendSeen(chatId),
+      chatId
+    );
+  }
+  
+  /**
+   * SChecks if a chat contact is online. Not entirely sure if this works with groups.
+   * @param chatId chat id: xxxxx@us.c
+   */
+  public async isChatOnline(chatId: string) {
+    return await this.page.evaluate(
+     chatId => WAPI.isChatOnline(chatId),
       chatId
     );
   }

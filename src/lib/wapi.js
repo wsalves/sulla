@@ -15,11 +15,13 @@ if (!window.Store||!window.Store.Msg) {
                 { id: "Store", conditions: (module) => (module.Chat && module.Msg) ? module : null },
                 { id: "MediaCollection", conditions: (module) => (module.default && module.default.prototype && (module.default.prototype.processFiles !== undefined||module.default.prototype.processAttachments !== undefined)) ? module.default : null },
                 { id: "MediaProcess", conditions: (module) => (module.BLOB) ? module : null },
+                { id: "Block", conditions: (module) => (module.blockContact && module.unblockContact) ? module : null },
                 { id: "ChatUtil", conditions: (module) => (module.sendClear) ? module : null },
                 { id: "GroupInvite", conditions: (module) => (module.queryGroupInviteCode) ? module : null },
                 { id: "Wap", conditions: (module) => (module.createGroup) ? module : null },
                 { id: "ServiceWorker", conditions: (module) => (module.default && module.default.killServiceWorker) ? module : null },
                 { id: "State", conditions: (module) => (module.STATE && module.STREAM) ? module : null },
+                { id: "Presence", conditions: (module) => (module.setPresenceAvailable && module.setPresenceUnavailable) ? module : null },
                 { id: "WapDelete", conditions: (module) => (module.sendConversationDelete && module.sendConversationDelete.length == 2) ? module : null },
                 { id: "Conn", conditions: (module) => (module.default && module.default.ref && module.default.refTTL) ? module.default : null },
                 { id: "WapQuery", conditions: (module) => (module.queryExist) ? module : ((module.default && module.default.queryExist) ? module.default : null) },
@@ -156,6 +158,7 @@ window.WAPI._serializeContactObj = (obj) => {
         msgs: null
     });
 };
+
 
 window.WAPI._serializeMessageObj = (obj) => {
     if (obj == undefined) {
@@ -425,7 +428,7 @@ window.WAPI.getGeneratedUserAgent = function (useragent) {
 }
 
 window.WAPI.getWAVersion = function () {
-    return window.DEBUG.VERSION;
+    return window.Debug.VERSION;
 }
 
 window.WAPI.sendMessageWithThumb = function (thumb, url, title, description, chatId, done) {
@@ -719,6 +722,11 @@ window.WAPI.isConnected = function (done) {
     if (done !== undefined) done(isConnected);
     return isConnected;
 };
+
+//I dont think this will work for group chats.
+window.WAPI.isChatOnline = async function (id) {
+    return await Store.Chat.get(id).presence.subscribe().then(_=>Store.Chat.get(id).presence.attributes.isOnline);
+}
 
 window.WAPI.processMessageObj = function (messageObj, includeMe, includeNotifications) {
     if (messageObj.isNotification) {
@@ -1065,7 +1073,10 @@ function isChatMessage(message) {
     return true;
 }
 
-
+window.WAPI.setPresence = function (available) {
+    if(available)Store.Presence.setPresenceAvailable();
+    else Store.Presence.setPresenceUnavailable();
+}
 window.WAPI.getUnreadMessages = function (includeMe, includeNotifications, use_unread_count, done) {
     const chats = window.Store.Chat.models;
     let output = [];
@@ -1469,6 +1480,30 @@ window.WAPI.onStateChanged = function (callback) {
 }
 
 /**
+ * Registers a callback to be called when your phone receives a new call request.
+ * @param callback - function - Callback function to be called upon a new call. returns a call object.
+ * @returns {boolean}
+ */
+window.WAPI.onIncomingCall = function (callback) {
+    window.Store.Call.on('add',callback);
+    return true;
+}
+
+/**
+ * @param label: either the id or the name of the label. id will be something simple like anhy nnumber from 1-10, name is the label of the label if that makes sense.
+ * @param objectId The Chat, message or contact id to which you want to add a label
+ * @param type The type of the action. It can be either "add" or "remove"
+ * @returns boolean true if it worked otherwise false
+ */
+window.WAPI.addOrRemoveLabels = async function (label, objectId, type) {
+    var {id} = Store.Label.models.find(x=>x.id==label||x.name==label)
+    var to = Store.Chat.get(objectId) || Store.Msg.get(objectId) || Store.Contact.get(objectId);
+    if(!id || !to) return false;
+    const {status} = await Store.Label.addOrRemoveLabels([{id,type}],[to]);
+    return status===200;
+}
+
+/**
  * Registers a callback to be called when a the acknowledgement state of a message changes.
  * @param callback - function - Callback function to be called when a message acknowledgement changes.
  * @returns {boolean}
@@ -1494,6 +1529,12 @@ window.WAPI.onLiveLocation = function (chatId, callback) {
         return false;
     }
 }
+
+window.WAPI.onBattery = function(callback) {
+    window.Store.Conn.on('change:battery', ({battery}) =>  callback(battery));
+    return true;
+}
+
 /**
  * Registers a callback to participant changes on a certain, specific group
  * @param groupId - string - The id of the group that you want to attach the callback to.
@@ -1812,7 +1853,7 @@ window.WAPI.simulateTyping = async function (chatId, on) {
  */
 window.WAPI.sendLocation = async function (chatId, lat, lng, loc) {
     var chat = Store.Chat.get(chatId);
-    var tempMsg = Object.create(chat.msgs.filter(msg => msg.__x_isSentByMe)[0]);
+    var tempMsg = Object.create(Store.Msg.models.filter(msg => msg.x_isSentByMe && !msg.quotedMsg)[0]);
     var newId = window.WAPI.getNewMessageId(chatId);
     var extend = {
         ack: 0,
@@ -1846,9 +1887,50 @@ window.WAPI.sendLocation = async function (chatId, lat, lng, loc) {
     return await Promise.all(Store.addAndSendMsgToChat(chat, tempMsg))
 };
 
+/**
+ * Send VCARD
+ *
+ * @param {string} chatId '000000000000@c.us'
+ * @param {string} vcard vcard as a string
+ * @param {string} contactName The display name for the contact. CANNOT BE NULL OTHERWISE IT WILL SEND SOME RANDOM CONTACT FROM YOUR ADDRESS BOOK.
+ */
+window.WAPI.sendVCard = async function (chatId, vcard, contactName) {
+    var chat = Store.Chat.get(chatId);
+    var tempMsg = Object.create(Store.Msg.models.filter(msg => msg.x_isSentByMe && !msg.quotedMsg)[0]);
+    var newId = window.WAPI.getNewMessageId(chatId);
+    var extend = {
+        ack: 0,
+        id: newId,
+        local: !0,
+        self: "out",
+        t: parseInt(new Date().getTime() / 1000),
+        to: chatId,
+        isNewMsg: !0,
+        type: "vcard",
+        clientUrl:undefined,
+        directPath:undefined,
+        filehash:undefined,
+        uploadhash:undefined,
+        mediaKey:undefined,
+        isQuotedMsgAvailable:false,
+        invis:false,
+        mediaKeyTimestamp:undefined,
+        mimetype:undefined,
+        height:undefined,
+        width:undefined,
+        ephemeralStartTimestamp:undefined,
+        body:vcard,
+        mediaData:undefined,
+        isQuotedMsgAvailable: false,
+        subtype: contactName
+    };
+    Object.assign(tempMsg, extend);
+    return (await Promise.all(Store.addAndSendMsgToChat(chat, tempMsg)))[1]=="success"
+};
+
 window.WAPI.sendButtons = async function(chatId){
     var chat = Store.Chat.get(chatId);
-    var tempMsg = Object.create(chat.msgs.filter(msg => msg.__x_isSentByMe)[0]);
+    var tempMsg = Object.create(Store.Msg.models.filter(msg => msg.x_isSentByMe && !msg.quotedMsg)[0]);
     // var tempMsg = Object.create(Store.Msg.models.filter(msg => msg.to._serialized===chatId&&msg.__x_isSentByMe&& msg.type=='chat' && !msg.quotedStanzaID)[0])
     var t2 = Object.create(Store.Msg.filter(x=>x.type=='template'&!x.id.fromMe)[0]);
     var newId = window.WAPI.getNewMessageId(chatId);
@@ -2090,7 +2172,7 @@ window.WAPI.reply = async function (chatId, body, quotedMsg) {
             quotedParticipant: quotedMsg.author || quotedMsg.from,
             quotedStanzaID:quotedMsg.id.id
         };
-    var tempMsg = Object.create(chat.msgs.filter(msg => msg.__x_isSentByMe)[0]);
+    var tempMsg = Object.create(Store.Msg.models.filter(msg => msg.x_isSentByMe && !msg.quotedMsg)[0]);
     var newId = window.WAPI.getNewMessageId(chatId);
     var extend = {
         ack: 0,
@@ -2119,7 +2201,7 @@ window.WAPI.reply = async function (chatId, body, quotedMsg) {
  */
 window.WAPI.sendPaymentRequest = async function (chatId, amount1000, currency, noteMessage) {
     var chat = Store.Chat.get(chatId);
-    var tempMsg = Object.create(chat.msgs.filter(msg => msg.__x_isSentByMe)[0]);
+    var tempMsg = Object.create(Store.Msg.models.filter(msg => msg.x_isSentByMe && !msg.quotedMsg)[0]);
     var newId = window.WAPI.getNewMessageId(chatId);
     var extend = {
         ack: 0,
@@ -2149,7 +2231,7 @@ window.WAPI.sendPaymentRequest = async function (chatId, amount1000, currency, n
  * @param {string} chatId '000000000000@c.us'
  * @param {object|array} vcard { displayName: 'Contact Name', vcard: 'BEGIN:VCARD\nVERSION:3.0\nN:;Contact Name;;;\nEND:VCARD' } | [{ displayName: 'Contact Name 1', vcard: 'BEGIN:VCARD\nVERSION:3.0\nN:;Contact Name 1;;;\nEND:VCARD' }, { displayName: 'Contact Name 2', vcard: 'BEGIN:VCARD\nVERSION:3.0\nN:;Contact Name 2;;;\nEND:VCARD' }]
  */
-window.WAPI.sendVCard = function (chatId, vcard) {
+window.WAPI._sendVCard = function (chatId, vcard) {
     var chat = Store.Chat.get(chatId);
     var tempMsg = Object.create(Store.Msg.models.filter(msg => msg.__x_isSentByMe && !msg.quotedMsg)[0]);
     var newId = window.WAPI.getNewMessageId(chatId);
@@ -2186,34 +2268,29 @@ window.WAPI.sendVCard = function (chatId, vcard) {
 
     Store.addAndSendMsgToChat(chat, tempMsg)
 };
+
 /**
  * Block contact 
  * @param {string} id '000000000000@c.us'
- * @param {*} done - function - Callback function to be called when a new message arrives.
  */
-window.WAPI.contactBlock = function (id, done) {
+window.WAPI.contactBlock = async function (id) {
     const contact = window.Store.Contact.get(id);
     if (contact !== undefined) {
-        contact.setBlock(!0);
-        done(true);
+        await Store.Block.blockContact(contact)
         return true;
     }
-    done(false);
     return false;
 }
 /**
- * unBlock contact 
+ * Unblock contact 
  * @param {string} id '000000000000@c.us'
- * @param {*} done - function - Callback function to be called when a new message arrives.
  */
-window.WAPI.contactUnblock = function (id, done) {
+window.WAPI.contactUnblock = async function (id) {
     const contact = window.Store.Contact.get(id);
     if (contact !== undefined) {
-        contact.setBlock(!1);
-        done(true);
+        await Store.Block.unblockContact(contact)
         return true;
     }
-    done(false);
     return false;
 }
 
