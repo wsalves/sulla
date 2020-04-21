@@ -390,18 +390,19 @@ app.post(
     }
     const key = getRequestKey(req);
 
-    console.log('body is ', req.body);
+    console.log('body is: ', req.body);
     const message = req.body;
 
-    return res.send(
-      await sendMessageText(
-        key,
-        message.id_unique,
-        message.from,
-        message.to,
-        message.body
-      )
+    const response = await sendMessageText(
+      key,
+      message.id_unique,
+      message.from,
+      message.to,
+      message.body
     );
+    
+    console.log('response: ', response); 
+    return res.send(response);
   }
 );
 
@@ -429,7 +430,6 @@ async function sendMessageText(key: string, id_unique: string, from: string, to:
     };
   }
   const jid = cuidToJid(to);
-
   
   let contact;
   contact = await session.client.checkNumberStatus(jid);
